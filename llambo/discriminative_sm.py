@@ -6,14 +6,12 @@ import re
 import numpy as np
 from scipy.stats import norm
 from aiohttp import ClientSession
+from llambo.llm_client import chat_completion, configure_openai_from_env, estimate_cost, get_request_timeout
 from llambo.rate_limiter import RateLimiter
 from llambo.discriminative_sm_utils import gen_prompt_tempates
 
 
-openai.api_type = os.environ["OPENAI_API_TYPE"]
-openai.api_version = os.environ["OPENAI_API_VERSION"]
-openai.api_base = os.environ["OPENAI_API_BASE"]
-openai.api_key = os.environ["OPENAI_API_KEY"]
+configure_openai_from_env()
 
 
 class LLM_DIS_SM:
@@ -50,6 +48,19 @@ class LLM_DIS_SM:
         assert type(self.shuffle_features) == bool, 'shuffle_features must be a boolean'
 
 
+    def _parse_prediction(self, gen_text):
+        wrapped_pred = re.findall(r"##\s*(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)\s*##", gen_text)
+        if len(wrapped_pred) == 1:
+            return float(wrapped_pred[0])
+
+        stripped_text = gen_text.strip()
+        bare_pred = re.fullmatch(r"-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?", stripped_text)
+        if bare_pred is not None:
+            return float(stripped_text)
+
+        return np.nan
+
+
     async def _async_generate(self, few_shot_template, query_example, query_idx):
         '''Generate a response from the LLM async.'''
         message = []
@@ -68,14 +79,15 @@ class LLM_DIS_SM:
                 try:
                     start_time = time.time()
                     self.rate_limiter.add_request(request_text=user_message, current_time=start_time)
-                    resp = await openai.ChatCompletion.acreate(
+                    resp = await chat_completion(
+                        session=session,
                         engine=self.chat_engine,
                         messages=message,
                         temperature=0.7,
                         max_tokens=8,
                         top_p=0.95,
                         n=max(n_preds, 3),            # e.g. for 5 templates, get 2 generations per template
-                        request_timeout=10
+                        request_timeout=get_request_timeout()
                     )
                     self.rate_limiter.add_request(request_token_count=resp['usage']['total_tokens'], current_time=time.time())
                     break
@@ -87,13 +99,14 @@ class LLM_DIS_SM:
                         raise e
                     pass
 
-        await openai.aiosession.get().close()
+        if openai.aiosession.get() is not None:
+            await openai.aiosession.get().close()
 
         if resp is None:
             return None
 
         tot_tokens = resp['usage']['total_tokens']
-        tot_cost = 0.0015*(resp['usage']['prompt_tokens']/1000) + 0.002*(resp['usage']['completion_tokens']/1000)
+        tot_cost = estimate_cost(resp)
 
         return query_idx, resp, tot_cost, tot_tokens
 
@@ -142,11 +155,7 @@ class LLM_DIS_SM:
                     sample_preds = []
                     all_gens_text = [x['message']['content'] for template_response in sample_response for x in template_response[0]['choices'] ]        # fuarr this is some high level programming
                     for gen_text in all_gens_text:
-                        gen_pred = re.findall(r"## (-?[\d.]+) ##", gen_text)
-                        if len(gen_pred) == 1:
-                            sample_preds.append(float(gen_pred[0]))
-                        else:
-                            sample_preds.append(np.nan)
+                        sample_preds.append(self._parse_prediction(gen_text))
                             
                     while len(sample_preds) < self.n_gens:
                         sample_preds.append(np.nan)
@@ -263,6 +272,4 @@ class LLM_DIS_SM:
         best_point = candidate_configs.iloc[[best_point_index], :]  # return selected point as dataframe not series
 
         return best_point, cost, time_taken
-
-
 

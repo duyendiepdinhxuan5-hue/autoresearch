@@ -5,13 +5,11 @@ import asyncio
 import numpy as np
 import pandas as pd
 from aiohttp import ClientSession
+from llambo.llm_client import configure_openai_from_env
 from llambo.rate_limiter import RateLimiter
 from llambo.generative_sm_utils import gen_prompt_tempates
 
-openai.api_type = os.environ["OPENAI_API_TYPE"]
-openai.api_version = os.environ["OPENAI_API_VERSION"]
-openai.api_base = os.environ["OPENAI_API_BASE"]
-openai.api_key = os.environ["OPENAI_API_KEY"]
+configure_openai_from_env()
 
 
 class LLM_GEN_SM:
@@ -224,6 +222,5 @@ class LLM_GEN_SM:
             return best_point, pred_probs, cost, time_taken
         else:
             return best_point, cost, time_taken
-
 
 

@@ -9,12 +9,10 @@ import pandas as pd
 from aiohttp import ClientSession
 from langchain import FewShotPromptTemplate
 from langchain import PromptTemplate
+from llambo.llm_client import chat_completion, configure_openai_from_env, estimate_cost, get_request_timeout
 from llambo.rate_limiter import RateLimiter
 
-openai.api_type = os.environ["OPENAI_API_TYPE"]
-openai.api_version = os.environ["OPENAI_API_VERSION"]
-openai.api_base = os.environ["OPENAI_API_BASE"]
-openai.api_key = os.environ["OPENAI_API_KEY"]
+configure_openai_from_env()
 
 
 class LLM_ACQ:
@@ -298,14 +296,15 @@ Hyperparameter configuration:"""
                 try:
                     start_time = time.time()
                     self.rate_limiter.add_request(request_text=user_message, current_time=start_time)
-                    resp = await openai.ChatCompletion.acreate(
+                    resp = await chat_completion(
+                        session=session,
                         engine=self.chat_engine,
                         messages=message,
                         temperature=0.8,
                         max_tokens=500,
                         top_p=0.95,
                         n=self.n_gens,
-                        request_timeout=10
+                        request_timeout=get_request_timeout()
                     )
                     self.rate_limiter.add_request(request_token_count=resp['usage']['total_tokens'], current_time=start_time)
                     break
@@ -314,13 +313,14 @@ Hyperparameter configuration:"""
                     print(resp)
                     print(e)
 
-        await openai.aiosession.get().close()
+        if openai.aiosession.get() is not None:
+            await openai.aiosession.get().close()
 
         if resp is None:
             return None
 
         tot_tokens = resp['usage']['total_tokens']
-        tot_cost = 0.0015*(resp['usage']['prompt_tokens']/1000) + 0.002*(resp['usage']['completion_tokens']/1000)
+        tot_cost = estimate_cost(resp)
 
         return resp, tot_cost, tot_tokens
 
@@ -507,12 +507,13 @@ Hyperparameter configuration:"""
 
 
             retry += 1
+            if number_candidate_points >= 5:
+                break
             if retry > 3:
                 print(f'Desired fval: {desired_fval:.6f}')
                 print(f'Number of proposed candidate points: {len(candidate_points)}')
                 print(f'Number of accepted candidate points: {filtered_candidate_points.shape[0]}')
-                if len(candidate_points) > 5:
-                    filtered_candidate_points = pd.DataFrame(candidate_points)
+                if number_candidate_points > 5:
                     break
                 else:
                     raise Exception('LLM failed to generate candidate points')
