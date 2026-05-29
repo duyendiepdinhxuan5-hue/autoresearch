@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+*.log
+
+log/
+pip-install.log
+smac3-output_*/
+
+exp_baselines/results_*/
+exp_baselines/run_logs/
+exp_bayesmark/results_*/
+exp_bayesmark/logs_*/
+exp_bayesmark/run_logs/

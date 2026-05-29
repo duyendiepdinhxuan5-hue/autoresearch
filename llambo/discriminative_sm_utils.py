@@ -156,7 +156,7 @@ Performance: {A}"""
             else:
                 raise Exception
             prefix += f" The tabular dataset contains {n_samples} samples and {tot_feats} features ({cat_feats} categorical, {num_feats} numerical). "
-        prefix += f" Your response should only contain the predicted {metric} in the format ## performance ##."
+        prefix += f" Your response should only contain one numeric predicted {metric} in the format ## performance ##, with both opening and closing ## delimiters."
 
         suffix = """
 Hyperparameter configuration: {Q}

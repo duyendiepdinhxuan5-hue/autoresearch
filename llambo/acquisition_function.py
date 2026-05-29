@@ -258,8 +258,15 @@ Hyperparameter configuration: {Q}"""
                 prefix += "\n"
             prefix += f"Recommend a configuration that can achieve the target performance of {jittered_desired_fval:.6f}. "
             if use_context in ['partial_context', 'full_context']:
-                prefix += "Do not recommend values at the minimum or maximum of allowable range, do not recommend rounded values. Recommend values with highest possible precision, as requested by the allowed ranges. "
-            prefix += f"Your response must only contain the predicted configuration, in the format ## configuration ##.\n"
+                prefix += "Values close to the minimum or maximum of an allowable range are valid when the examples suggest they are useful, but never recommend values outside the allowable range. Avoid unnecessary rounding and keep the precision requested by the allowed ranges. "
+                if model == 'RandomForest':
+                    prefix += "For RandomForest, small min_samples_leaf, min_samples_split, and min_weight_fraction_leaf values can be useful because they allow more expressive trees. Do not copy any hyperparameter configuration shown in the examples; propose a new nearby configuration that changes at least two hyperparameters from the best observed example. "
+            prefix += (
+                "Your response must only contain one predicted configuration with this exact schema: "
+                "## max_depth: <int>, max_features: <float>, min_impurity_decrease: <float>, "
+                "min_samples_leaf: <float>, min_samples_split: <float>, min_weight_fraction_leaf: <float> ##. "
+                "Do not output the word configuration as a placeholder.\n"
+            )
 
             suffix = """
 Performance: {A}
@@ -354,7 +361,12 @@ Hyperparameter configuration:"""
         pairs = response_str.split(',')
         response_json = {}
         for pair in pairs:
-            key, value = [x.strip() for x in pair.split(':')]
+            if ':' in pair:
+                key, value = [x.strip() for x in pair.split(':', 1)]
+            elif ' is ' in pair:
+                key, value = [x.strip() for x in pair.split(' is ', 1)]
+            else:
+                raise ValueError(f'Could not parse hyperparameter assignment: {pair}')
             response_json[key] = float(value)
             
         return response_json
@@ -448,12 +460,16 @@ Hyperparameter configuration:"""
             self.observed_best = np.max(observed_fvals.values)
             self.observed_worst = np.min(observed_fvals.values)
             desired_fval = self.observed_best + alpha*range
+            if self.task_context.get('metric') == 'accuracy':
+                desired_fval = min(desired_fval, self.observed_best + 0.03, 0.92)
 
             while desired_fval >= .9999:  # accuracy can't be greater than 1
                 for alpha_ in alpha_range:
                     if alpha_ < alpha:
                         alpha = alpha_  # new alpha
                         desired_fval = self.observed_best + alpha*range
+                        if self.task_context.get('metric') == 'accuracy':
+                            desired_fval = min(desired_fval, self.observed_best + 0.03, 0.92)
                         break
 
             print(f'Adjusted alpha: {alpha} | [original alpha: {self.alpha}], desired fval: {desired_fval:.6f}')
@@ -476,7 +492,8 @@ Hyperparameter configuration:"""
         filtered_candidate_points = pd.DataFrame()
 
         retry = 0
-        while number_candidate_points < 5:
+        min_candidate_points = 3
+        while number_candidate_points < min_candidate_points:
             llm_responses = asyncio.run(self._async_generate_concurrently(prompt_templates, query_templates))
 
             candidate_points = []
@@ -490,7 +507,11 @@ Hyperparameter configuration:"""
                 for response_message in response[0]['choices']:
                         response_content = response_message['message']['content']
                         try:
-                            response_content = response_content.split('##')[1].strip()
+                            response_parts = response_content.split('##')
+                            if len(response_parts) > 1:
+                                response_content = response_parts[1].strip()
+                            else:
+                                response_content = response_content.strip()
                             candidate_points.append(self._convert_to_json(response_content))
                         except:
                             print(response_content)
@@ -507,13 +528,13 @@ Hyperparameter configuration:"""
 
 
             retry += 1
-            if number_candidate_points >= 5:
+            if number_candidate_points >= min_candidate_points:
                 break
             if retry > 3:
                 print(f'Desired fval: {desired_fval:.6f}')
                 print(f'Number of proposed candidate points: {len(candidate_points)}')
                 print(f'Number of accepted candidate points: {filtered_candidate_points.shape[0]}')
-                if number_candidate_points > 5:
+                if number_candidate_points >= min_candidate_points:
                     break
                 else:
                     raise Exception('LLM failed to generate candidate points')

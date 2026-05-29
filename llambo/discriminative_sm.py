@@ -54,6 +54,10 @@ class LLM_DIS_SM:
             return float(wrapped_pred[0])
 
         stripped_text = gen_text.strip()
+        open_wrapped_pred = re.fullmatch(r"##\s*(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)\s*", stripped_text)
+        if open_wrapped_pred is not None:
+            return float(open_wrapped_pred.group(1))
+
         bare_pred = re.fullmatch(r"-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?", stripped_text)
         if bare_pred is not None:
             return float(stripped_text)
@@ -84,7 +88,7 @@ class LLM_DIS_SM:
                         engine=self.chat_engine,
                         messages=message,
                         temperature=0.7,
-                        max_tokens=8,
+                        max_tokens=32,
                         top_p=0.95,
                         n=max(n_preds, 3),            # e.g. for 5 templates, get 2 generations per template
                         request_timeout=get_request_timeout()
